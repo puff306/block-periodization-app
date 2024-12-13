@@ -1,0 +1,102 @@
+// This is a Node.js backend for handling user accounts, templates, and performance logs
+
+const express = require('express');
+const cors = require('cors');
+const { Pool } = require('pg');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+
+const app = express();
+const port = process.env.PORT || 5000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Database Connection
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
+
+// Routes
+
+// 1. User Registration
+app.post('/api/register', async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      'INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id',
+      [email, hashedPassword]
+    );
+    res.status(201).json({ userId: result.rows[0].id });
+  } catch (err) {
+    res.status(500).json({ error: 'Error registering user.' });
+  }
+});
+
+// 2. User Login
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials.' });
+
+    const user = result.rows[0];
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials.' });
+
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ error: 'Error logging in.' });
+  }
+});
+
+// 3. Save Template
+app.post('/api/templates', async (req, res) => {
+  const { userId, name, blocks } = req.body;
+  try {
+    const result = await pool.query(
+      'INSERT INTO templates (user_id, name, blocks) VALUES ($1, $2, $3) RETURNING id',
+      [userId, name, blocks]
+    );
+    res.status(201).json({ templateId: result.rows[0].id });
+  } catch (err) {
+    res.status(500).json({ error: 'Error saving template.' });
+  }
+});
+
+// 4. Get User Templates
+app.get('/api/templates/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const result = await pool.query('SELECT * FROM templates WHERE user_id = $1', [userId]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Error fetching templates.' });
+  }
+});
+
+// 5. Log Performance Data
+app.post('/api/logs', async (req, res) => {
+  const { userId, date, activity, result } = req.body;
+  try {
+    const result = await pool.query(
+      'INSERT INTO logs (user_id, date, activity, result) VALUES ($1, $2, $3, $4) RETURNING id',
+      [userId, date, activity, result]
+    );
+    res.status(201).json({ logId: result.rows[0].id });
+  } catch (err) {
+    res.status(500).json({ error: 'Error logging performance data.' });
+  }
+});
+
+// Start Server
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
